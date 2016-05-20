@@ -5,34 +5,35 @@ use strict;
 
 =head1 NAME
 
-spdxl.pl  -- script that attempts to identify FOSS licenses contained with files and directories.
+spdxl.pl -- script that attempts to identify FOSS licenses and
+corresponding files associated with them based on SPDX tags.
 
 =head1 VERSION
 
-Version 0.1.0
+Version 0.1.1
 
 =cut
 
-our $VERSION = '0.1.0';
+our $VERSION = '0.1.1';
 
 =head1 SYNOPSIS
 
-This file is a script where many of the actions that spdxl executes
-are stored.
+spdxl.pl [-cdfhv] [long options...] <args>
+
+ -d STR --dir STR    Directory to search
+ -f STR --fil STR    Single file to check
+ -c --color          Color output
+ -h --htmlout        Produce HTML output
+ -v --verbose        Wordy
+ --help              Print usage message and exit
+
 
 =head1 LICENSE
 
-GPLv3
+ SPDX-License-Identifier: GPL-3.0
+ This file is part of the SPDXL package.
 
-=over
-
- spdxl  -- license identifier with reporting
-
- SPDX license identifier: GPL-3.0
-
- Copyright (C) 2015, Jeremiah C. Foster <jeremiah@jeremiahfoster.com>
-
- This file is part of spdxl.
+ GNU Public License v3.0
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
@@ -49,10 +50,37 @@ GPLv3
  Foundation, Inc., 51 Franklin Street, Fifth Floor,
  Boston, MA 02110-1301, USA.
 
+=head1 COPYRIGHT
+
+ Copyright (C) 2015, Jeremiah C. Foster <jeremiah@jeremiahfoster.com>
+
+=over
+
  List of changes:
  Aug. 2015, spdxl.pl, created file
+ Feb. 2016, spdxl.pl, MVP working
 
 =back
+
+=head1 METHODS
+
+=head2 main
+
+ The main subroutine goes through all the files we've found, checks if
+ its a directory, skip it if it is, print the file name if we've found
+ a tag and then go through the file to pull out the identifier line.
+
+ ## TODO -- in the future we'll use this data to put out a conformant
+ ## SPDX doc
+
+=head2 nogit
+
+ If we find a git repo, i.e. ".git" tell File::Find to ignore it.
+
+=head2 htmlout
+
+ HTML output works, but it means that we do not have any other output
+ ATM. Plain text and colored ASCII text needs to be fixed next.
 
 =cut
 
@@ -65,17 +93,35 @@ GPLv3
 use Path::Tiny;
 use File::Find;
 use File::Compare;
+use File::Slurp;
+use Getopt::Long::Descriptive;
+use Pod::Usage;
+use Term::ANSIColor;
 use autodie;
 use feature "say";
-no warnings 'experimental::smartmatch';
 
-my $git_dir = path("./.git/");
-if (-e $git_dir) {
-  # handle the git dir
-};
+# --- Command line options
+my ($opt, $usage) = describe_options
+  ('spdxl.pl %o <args>',
+   [ 'dir|d=s',    "Directory to search"            ],
+   [ 'fil|f=s' ,   "Single file to check"           ],
+   [ 'color|c',    "Color output"                   ],
+   [ 'htmlout|h',  "Produce HTML output"            ],
+   [ 'verbose|v',  "Wordy"                          ],
+   [ 'help',       "Print usage message and exit"   ],
+  );
 
-my @directories_to_search = ".";
-find(\&nogit, @directories_to_search);
+if ($opt->fil) {
+  print "File: " . $opt->fil . "\n" if $opt->verbose;
+  check_each_line($opt->fil);
+  exit;
+}
+
+print($usage->text), exit if $opt->help;
+print "Searching through " . $opt->dir . "\n" if $opt->verbose;
+
+# go through each dir
+find(\&nogit, $opt->dir);
 
 my @files;
 sub nogit {
@@ -84,13 +130,108 @@ sub nogit {
     push @files,  $File::Find::name;
 }
 
-# list of files names that match
-my @licenses = map { $_ } grep /^\.\/(?:LICEN[CS]E|COPYING)$/, @files;
-if (compare($licenses[0], $licenses[1]) == 0) {
-  say "files identical.";
+my (@lines, @spdxtags);
+sub main {
+  map {
+    my ($row, $line);
+    if (! -d $_) {
+      @lines = read_file("$_");
+      print "File: $_ "; # This prints the files we've found
+      foreach my $line (@lines) {
+	if ($line =~ /SPDX.?[Ll]ic/) {
+	  chomp($line);
+	  # Here we put the line in an array. Perhaps make a hash with
+	  # file name and tag?
+	  push @{ $spdxtags[$row++] }, $line;
+	  if ($opt->color) { colored_output($line) } else { print "$line"; }
+	}
+      } print "\n";
+    }
+  } @files;
 }
-else {
-  say "files not identical.";
-  use Text::Diff;
-  # magic
+main();
+
+sub check_each_line {
+  my $file = shift;
+  my ($row, $line);
+  if (! -d $file) {
+    @lines = read_file("$file");
+    print "File: $file " if $opt->verbose;
+    foreach my $line (@lines) {
+      if ($line =~ /SPDX.?[Ll]ic/) {
+	chomp($line);
+	# Here we put the line in an array. Perhaps make a hash with
+	# file name and tag?
+	push @{ $spdxtags[$row++] }, $line;
+	# if ($opt->color) { colored_output($line) } else { print "$line"; }
+      }
+    } print "\n";
+  }
 }
+
+sub colored_output {
+  my $line = shift;
+  print colored ['bright_yellow on_black'], "$line";
+}
+
+sub htmlout {
+  use Text::Xslate;
+  my $tx = Text::Xslate->new();
+  my @tags = shift;
+  my %vars = ( tags => \@tags,  );
+  print $tx->render("spdxl.tx", \%vars);
+}
+htmlout(@spdxtags) if $opt->htmlout;
+
+sub cmp_2_files {
+
+  # Should the comparison short-circuit if hashsums match?
+
+  # list of files names that match the regex below
+  my (@licenses) = map { $_ } grep /^\.\/(?:LICEN[CS]E|COPYING)$/, @files;
+  if (compare($licenses[0], $licenses[1]) == 0) {
+    say "files identical.";
+  }
+  else { # If the files *don't* match
+    say "files not identical.";
+    use Text::Diff;
+    # magic
+  }
+}
+
+sub gitish {
+  # git ls-files?
+}
+
+my $git_dir = path("./.git/");
+if (-e $git_dir) {
+  # handle the git dir
+};
+
+
+# # list of files names that match license or copyright as file names
+# my @licenses = map { $_ } grep /^\.\/(?:LICEN[CS]E|COPYING)$/, @files;
+# print "Files found\n";
+# say map { "$_\n" } @files;
+# # print "Potential licenses found\n";
+# say map { "$_\n" } @licenses;
+
+
+# my $license_database = path("./license_database/");
+# opendir(D, "$license_database") || die "Can't open directory $license_database: $!\n";
+# my @known_licenses = readdir(D);
+# closedir(D);
+
+# # compare each license found to those in our database
+# if (compare($licenses[0], $licenses[1]) == 0) {
+#   say "files identical.";
+# }
+# else {
+#   say "files not identical.";
+#   use Text::Diff;
+#   # magic
+# }
+
+
+
+1;
