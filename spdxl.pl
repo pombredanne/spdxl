@@ -70,9 +70,6 @@ spdxl.pl [-cdfhv] [long options...] <args>
  its a directory, skip it if it is, print the file name if we've found
  a tag and then go through the file to pull out the identifier line.
 
- ## TODO -- in the future we'll use this data to put out a conformant
- ## SPDX doc
-
 =head2 nogit
 
  If we find a git repo, i.e. ".git" tell File::Find to ignore it.
@@ -89,6 +86,12 @@ spdxl.pl [-cdfhv] [long options...] <args>
 ## module for that work or we'll just ignore it which is probably a
 ## really bad idea since important data can be gleaned or even
 ## determined with a high degree of certainty.
+
+## TODO -- in the future we'll use this data to put out a conformant
+## SPDX doc
+
+## Separate html output from text output, currently if you specify
+## html output, it comes at the end of the text output.
 
 use Path::Tiny;
 use File::Find;
@@ -131,7 +134,7 @@ sub nogit {
 }
 
 my (@lines, @spdxtags);
-sub main {
+sub grep_for_tags {
   map {
     my ($row, $line);
     if (! -d $_) {
@@ -143,20 +146,20 @@ sub main {
 	  # Here we put the line in an array. Perhaps make a hash with
 	  # file name and tag?
 	  push @{ $spdxtags[$row++] }, $line;
-	  if ($opt->color) { colored_output($line) } else { print "$line"; }
+	  if ($opt->color) { colored_output($line); }
 	}
       } print "\n";
     }
   } @files;
 }
-main();
+grep_for_tags();
 
-sub check_each_line {
+sub check_each_line {  # This should just build up the data structure, don't print anything
   my $file = shift;
   my ($row, $line);
   if (! -d $file) {
     @lines = read_file("$file");
-    print "File: $file " if $opt->verbose;
+    # print "File: $file " 
     foreach my $line (@lines) {
       if ($line =~ /SPDX.?[Ll]ic/) {
 	chomp($line);
@@ -181,6 +184,7 @@ sub htmlout {
   my %vars = ( tags => \@tags,  );
   print $tx->render("spdxl.tx", \%vars);
 }
+# Create html output from the tags found if requested
 htmlout(@spdxtags) if $opt->htmlout;
 
 sub cmp_2_files {
@@ -207,31 +211,6 @@ my $git_dir = path("./.git/");
 if (-e $git_dir) {
   # handle the git dir
 };
-
-
-# # list of files names that match license or copyright as file names
-# my @licenses = map { $_ } grep /^\.\/(?:LICEN[CS]E|COPYING)$/, @files;
-# print "Files found\n";
-# say map { "$_\n" } @files;
-# # print "Potential licenses found\n";
-# say map { "$_\n" } @licenses;
-
-
-# my $license_database = path("./license_database/");
-# opendir(D, "$license_database") || die "Can't open directory $license_database: $!\n";
-# my @known_licenses = readdir(D);
-# closedir(D);
-
-# # compare each license found to those in our database
-# if (compare($licenses[0], $licenses[1]) == 0) {
-#   say "files identical.";
-# }
-# else {
-#   say "files not identical.";
-#   use Text::Diff;
-#   # magic
-# }
-
 
 
 1;
